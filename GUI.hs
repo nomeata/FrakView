@@ -108,7 +108,7 @@ draw ifs doRender (DrawSet baseSet n) = do
 		let s = runIFS n ifs (asSet baseSet)
 		pausingForM_ 1000 (range ((0,0), (res,res))) $ \(x',y') -> doRender $ do
 				setSourceRGB 0 0 0
-				--setAntialias AntialiasNone
+				setAntialias AntialiasGray
 				let factor = 1/realToFrac res
 				    x = factor * realToFrac x'
 				    y = factor * realToFrac y'
@@ -124,7 +124,7 @@ draw ifs doRender (DrawChaos num showLines) = do
 	if showLines
 	 then do
 		pausingForM_ 100 (take (2^num) pairs) $ \((x,y),(x',y')) -> doRender $ do
-			--setAntialias AntialiasNone
+			setAntialias AntialiasGray
 			setLineWidth (1/1000)
 			moveTo x y
 			lineTo x' y'
@@ -132,7 +132,7 @@ draw ifs doRender (DrawChaos num showLines) = do
 	 else do
 		pausingForM_ 1000 (take (2^num) points) $ \(x,y) -> doRender $ do
 			setSourceRGBA 0 0 0 1
-			--setAntialias AntialiasNone
+			setAntialias AntialiasGray
 			rectangle x y (1/1000) (1/1000) -- hopefully one pixel
 			fill
 	
