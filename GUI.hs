@@ -4,7 +4,7 @@ import Graphics.Rendering.Cairo
 import Graphics.Rendering.Cairo.Matrix (transformPoint, Matrix(..))
 import qualified  Graphics.Rendering.Cairo.Matrix as CM
 import Graphics.UI.Gtk.Glade
-
+import Graphics.UI.Gtk.Gdk.Events
 
 import Data.Ix
 import Data.IORef
@@ -13,6 +13,7 @@ import Data.List
 import Text.Printf
 import System.Random
 import Control.Monad
+import Control.Applicative ((<$>))
 
 import FrakData
 import MatrixRead
@@ -292,7 +293,7 @@ setDefaults xml = do
 	set radio [ toggleButtonActive := True]
 	
 	comboBox <- xmlGetWidget xml castToComboBox "comboBaseSet"
-	model <- listStoreNew [TMstring]
+	comboBoxSetModelText comboBox
 	comboBoxRemoveText comboBox 0
 	mapM_ (comboBoxAppendText comboBox . show)  [minBound .. maxBound :: BaseSet]
 	comboBoxSetActive comboBox 0
@@ -358,7 +359,7 @@ getRenderer xml getIFS = do
 		get entry entryText
 	getComboSelection w = do 
 		comboBox <- xmlGetWidget xml castToComboBox w
-		(fromMaybe 0) `fmap` comboBoxGetActive comboBox
+		max 0 <$> comboBoxGetActive comboBox
 	parseCylinder ifs = do
 		sequence . map (\n' -> do
 			n <- readM [n']
@@ -404,6 +405,7 @@ ifsLabel xml ifs = do
 
 onIFSChange xml ifsRef realHandler = do
 	comboBox <- xmlGetWidget xml castToComboBox "comboIFS"
+	comboBoxSetModelText comboBox
 	mapM_ (comboBoxAppendText comboBox . fst ) knownIFS
 
 	spinNum <- xmlGetWidget xml castToSpinButton "spinNumPhi"
