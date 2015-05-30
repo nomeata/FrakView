@@ -1,9 +1,9 @@
 
-import Graphics.UI.Gtk hiding (fill, Point)
+import Graphics.UI.Gtk hiding (fill, Point, rectangle, eventButton)
 import Graphics.Rendering.Cairo 
 import Graphics.Rendering.Cairo.Matrix (transformPoint, Matrix(..))
 import qualified  Graphics.Rendering.Cairo.Matrix as CM
-import Graphics.UI.Gtk.Glade
+import Graphics.UI.Gtk.Builder
 import Graphics.UI.Gtk.Gdk.Events
 
 import Data.Ix
@@ -14,6 +14,7 @@ import Text.Printf
 import System.Random
 import Control.Monad
 import Control.Applicative ((<$>))
+import qualified Data.Text as T
 
 import FrakData
 import MatrixRead
@@ -104,7 +105,7 @@ draw ifs doRender (DrawCairo baseSet cylinder n) = do
 
 draw ifs doRender (DrawSet baseSet n) = do
 	forM_ [1..10] $ \pot -> do
-		let res = 2^pot
+		let res = 2^(pot :: Integer) :: Integer
 		let s = runIFS n ifs (asSet baseSet)
 		pausingForM_ 1000 (range ((0,0), (res,res))) $ \(x',y') -> doRender $ do
 				setSourceRGB 0 0 0
@@ -191,7 +192,7 @@ redrawHandler canvas getRend getIFS = do
 	
 
 mouseHandler xml getTab ifsRef callback = do
-	canvas <- xmlGetWidget xml castToDrawingArea "drawingarea"
+	canvas <- builderGetObject xml castToDrawingArea "drawingarea"
 	widgetAddEvents canvas [Button1MotionMask, KeyPressMask, KeyReleaseMask]
 	dragRef <- newIORef (Nothing :: Maybe (Int, Bool, (Double, Double)))
 
@@ -217,12 +218,12 @@ mouseHandler xml getTab ifsRef callback = do
 		  CodingTab -> when (eventButton e == LeftButton) $ do
 			(w',h') <- widgetGetSize canvas
 			ifs <- readIORef ifsRef
-			spinCodeLen <- xmlGetWidget xml castToSpinButton "spinCodeLen"
+			spinCodeLen <- builderGetObject xml castToSpinButton "spinCodeLen"
 			codeLenght <- round `fmap` get spinCodeLen spinButtonValue
 			let p = (eventX e/realToFrac w', eventY e/realToFrac h')
 			    code = ifsCode codeLenght ifs p
 			    text = maybe "Nicht in der Menge" (concatMap show) code
-			label <- xmlGetWidget xml castToLabel "labelCoding"
+			label <- builderGetObject xml castToLabel "labelCoding"
 			set label [labelLabel := "Kodierung: " ++ text]
 		
 		  _ -> return ()
@@ -245,7 +246,7 @@ mouseHandler xml getTab ifsRef callback = do
 			    newM = CM.translate (nx-bx) (ny-by) m
 			    newifs = before ++ newM : after
 		        writeIORef ifsRef newifs
-			comboBox <- xmlGetWidget xml castToComboBox "comboIFS"
+			comboBox <- builderGetObject xml castToComboBox "comboIFS"
 			comboBoxSetActive comboBox 0
 			callback
 		  Just (i,False, dp) -> do
@@ -260,7 +261,7 @@ mouseHandler xml getTab ifsRef callback = do
 			    		rotateMiddle newRot $ CM.identity
 			    newifs = before ++ newM : after
 		        writeIORef ifsRef newifs
-			comboBox <- xmlGetWidget xml castToComboBox "comboIFS"
+			comboBox <- builderGetObject xml castToComboBox "comboIFS"
 			comboBoxSetActive comboBox 0
 			callback
 		  Nothing -> return ()
@@ -279,30 +280,30 @@ mouseHandler xml getTab ifsRef callback = do
 
 	
 handleCodeButton xml handler = do
-	button <- xmlGetWidget xml castToButton "buttonCopyCode"
+	button <- builderGetObject xml castToButton "buttonCopyCode"
 	onClicked button $ do
-		label <- xmlGetWidget xml castToLabel "labelCoding"
+		label <- builderGetObject xml castToLabel "labelCoding"
 		labelText <- get label labelLabel
 		let codeText = drop (length "Kodierung: ") labelText
 		when (codeText /= "Nicht in der Menge") $ do
-			entry <- xmlGetWidget xml castToEntry "entryCylinder"
+			entry <- builderGetObject xml castToEntry "entryCylinder"
 			set entry [entryText := codeText]
 
 setDefaults xml = do
-	radio <- xmlGetWidget xml castToRadioButton "radioCairo"
+	radio <- builderGetObject xml castToRadioButton "radioCairo"
 	set radio [ toggleButtonActive := True]
 	
-	comboBox <- xmlGetWidget xml castToComboBox "comboBaseSet"
+	comboBox <- builderGetObject xml castToComboBox "comboBaseSet"
 	comboBoxSetModelText comboBox
 	comboBoxRemoveText comboBox 0
-	mapM_ (comboBoxAppendText comboBox . show)  [minBound .. maxBound :: BaseSet]
+	mapM_ (comboBoxAppendText comboBox . T.pack . show)  [minBound .. maxBound :: BaseSet]
 	comboBoxSetActive comboBox 0
 
 
 data ActiveTab = RenderTab | IFSTab | CodingTab | SystemTab deriving (Eq, Enum)
 
 getActiveTab xml = do
-	notebook <- xmlGetWidget xml castToNotebook "notebook"
+	notebook <- builderGetObject xml castToNotebook "notebook"
 	active <- get notebook notebookPage
 	return $ toEnum active
 
@@ -349,16 +350,16 @@ getRenderer xml getIFS = do
 		showLines <- getToggleActive "toggleShowLines"
 		return $ DrawChaos value showLines
 	getSpinValue w = do 
-		spin <- xmlGetWidget xml castToSpinButton w
+		spin <- builderGetObject xml castToSpinButton w
 		round `fmap` get spin spinButtonValue
 	getToggleActive w = do 
-		toggle <- xmlGetWidget xml castToToggleButton w
+		toggle <- builderGetObject xml castToToggleButton w
 		get toggle toggleButtonActive
 	getEntryText w = do 
-		entry <- xmlGetWidget xml castToEntry w
+		entry <- builderGetObject xml castToEntry w
 		get entry entryText
 	getComboSelection w = do 
-		comboBox <- xmlGetWidget xml castToComboBox w
+		comboBox <- builderGetObject xml castToComboBox w
 		max 0 <$> comboBoxGetActive comboBox
 	parseCylinder ifs = do
 		sequence . map (\n' -> do
@@ -379,16 +380,16 @@ onRendererChange xml getRend realHandler = do
 
 	forM ["radioSet", "radioCairo", "radioChaos", "toggleCylinderTrace",
 	      "toggleShowLines", "toggleShowFraktal"] $ \w -> 
-		xmlGetWidget xml castToToggleButton w >>= flip onToggled handler
+		builderGetObject xml castToToggleButton w >>= flip onToggled handler
 	forM ["spinCairoDepth", "spinSetDepth", "spinChaosPoints"] $ \w ->
-		xmlGetWidget xml castToSpinButton w >>= flip onValueSpinned handler
+		builderGetObject xml castToSpinButton w >>= flip onValueSpinned handler
 	forM ["entryCylinder"] $ \w ->
-		xmlGetWidget xml castToEntry w >>= flip onEditableChanged handler
-	xmlGetWidget xml castToNotebook "notebook" >>= flip afterSwitchPage (const handler)
-	xmlGetWidget xml castToComboBox "comboBaseSet" >>= flip onChanged handler
+		builderGetObject xml castToEntry w >>= flip onEditableChanged handler
+	builderGetObject xml castToNotebook "notebook" >>= flip afterSwitchPage (const handler)
+	builderGetObject xml castToComboBox "comboBaseSet" >>= flip onChanged handler
 
 ifsLabel xml ifs = do
-	label <- xmlGetWidget xml castToLabel "labelIFS"
+	label <- builderGetObject xml castToLabel "labelIFS"
 	set label [labelLabel := text]
   where matrixLines (Matrix a1 b1 a2 b2 c1 c2) = 
   		[ printf "/%5.2f %5.2f\\ _|_ /%5.2f\\" a1 b1 c1
@@ -404,15 +405,15 @@ ifsLabel xml ifs = do
 		round' d = round (d*255)
 
 onIFSChange xml ifsRef realHandler = do
-	comboBox <- xmlGetWidget xml castToComboBox "comboIFS"
+	comboBox <- builderGetObject xml castToComboBox "comboIFS"
 	comboBoxSetModelText comboBox
-	mapM_ (comboBoxAppendText comboBox . fst ) knownIFS
+	mapM_ (comboBoxAppendText comboBox . T.pack . fst) knownIFS
 
-	spinNum <- xmlGetWidget xml castToSpinButton "spinNumPhi"
+	spinNum <- builderGetObject xml castToSpinButton "spinNumPhi"
 
 	let handler = do
 		curifs <- readIORef ifsRef
-		textMB <- comboBoxGetActiveText comboBox
+		textMB <- fmap T.unpack <$> comboBoxGetActiveText comboBox
 		doMB textMB $ \text -> do
 			doMB (lookup text knownIFS) $ \ifs -> do
 				when (curifs /= ifs) $ do 
@@ -439,9 +440,9 @@ ifsUpdated xml ifsRef = do
 	ifsLabel xml ifs
 
 handleFileButtons xml ifsRef handler = do
-	saveButton <- xmlGetWidget xml castToButton "buttonSave"
-	openButton <- xmlGetWidget xml castToButton "buttonOpen"
-	window <- xmlGetWidget xml castToWindow "window"
+	saveButton <- builderGetObject xml castToButton "buttonSave"
+	openButton <- builderGetObject xml castToButton "buttonOpen"
+	window <- builderGetObject xml castToWindow "window"
 
 	filter <- fileFilterNew
 	fileFilterSetName filter "Faktal-Dateien"
@@ -496,11 +497,10 @@ main = do
 
 	initGUI
 
-	xmlM <- xmlNew "FrakView.glade"
-	let xml = fromMaybe (error "can't find the glade file \"simple.glade\" \
-				          \in the current directory") xmlM
-	window <- xmlGetWidget xml castToWindow "window"
-	canvas <- xmlGetWidget xml castToDrawingArea "drawingarea"
+        xml <- builderNew
+        builderAddFromFile xml "FrakView.xml"
+	window <- builderGetObject xml castToWindow "window"
+	canvas <- builderGetObject xml castToDrawingArea "drawingarea"
 
 	setDefaults xml
 	
@@ -517,7 +517,7 @@ main = do
 		      Just 'f' -> windowFullscreen window >> return True
 		      _        -> return False
 	onDestroy window mainQuit
-        quitButton <- xmlGetWidget xml castToButton "buttonquit"
+        quitButton <- builderGetObject xml castToButton "buttonquit"
 	quitButton `onClicked` widgetDestroy window
 
 	handleCodeButton xml restartDrawing
