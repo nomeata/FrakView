@@ -1,10 +1,8 @@
-
-import Graphics.UI.Gtk hiding (fill, Point, rectangle, eventButton)
-import Graphics.Rendering.Cairo 
+import Graphics.UI.Gtk hiding (fill, Point, rectangle)
+import Graphics.Rendering.Cairo
 import Graphics.Rendering.Cairo.Matrix (transformPoint, Matrix(..))
 import qualified  Graphics.Rendering.Cairo.Matrix as CM
 import Graphics.UI.Gtk.Builder
-import Graphics.UI.Gtk.Gdk.Events
 
 import Data.Ix
 import Data.IORef
@@ -88,7 +86,7 @@ drawTrace ifs doRender trace = doRender $ do
 		transform m
 		asCairo Full
 
-draw ifs doRender (DrawCairo baseSet cylinder n) = do
+drawIt ifs doRender (DrawCairo baseSet cylinder n) = do
 	unless (null cylinder) $ do
 		pausingForM_ 100 (sequence . replicate n $ ifs) $ \ms -> do
 			doRender $ do
@@ -103,7 +101,7 @@ draw ifs doRender (DrawCairo baseSet cylinder n) = do
 			mapM transform (cylinderMs ++ ms)
 			asCairo baseSet
 
-draw ifs doRender (DrawSet baseSet n) = do
+drawIt ifs doRender (DrawSet baseSet n) = do
 	forM_ [1..10] $ \pot -> do
 		let res = 2^(pot :: Integer) :: Integer
 		let s = runIFS n ifs (asSet baseSet)
@@ -118,7 +116,7 @@ draw ifs doRender (DrawSet baseSet n) = do
 				rectangle x y factor factor
 				fill
 
-draw ifs doRender (DrawChaos num showLines) = do
+drawIt ifs doRender (DrawChaos num showLines) = do
 	diceRolls <- randomRs (0,length ifs - 1) `fmap` liftIO getStdGen
 	let points = scanl (\p pick -> transformPoint (ifs !! pick) p) (0,0) diceRolls
 	    pairs = zip points (tail points)
@@ -147,16 +145,16 @@ pausingForM_ period list action = pausing' 0 list
 
 redraw ifs widget getRend = do
 	(w',h') <- liftIO $ widgetGetSize widget
-	win <- liftIO $ widgetGetDrawWindow widget
+	Just win <- liftIO $ widgetGetWindow widget
 	let w = realToFrac w'
 	    h = realToFrac h'
 	(renderer, showIFS, traceMB) <- liftIO $  getRend
-	let doRender r = liftIO $ renderWithDrawable win (scale w h >> r)
+	let doRender r = liftIO $ renderWithDrawWindow win (scale w h >> r)
 	doRender (setSourceRGB 1 1 1 >> paint)
 	when showIFS $ doRender $ drawIFS ifs -- render below, because its faster
 	doMB traceMB $ drawTrace ifs doRender 
 	doMB renderer $ \rend -> do
-		draw ifs doRender rend
+		drawIt ifs doRender rend
 		when (showIFS) $ doRender $ drawIFS ifs
 	  	
 
@@ -196,14 +194,16 @@ mouseHandler xml getTab ifsRef callback = do
 	widgetAddEvents canvas [Button1MotionMask, KeyPressMask, KeyReleaseMask]
 	dragRef <- newIORef (Nothing :: Maybe (Int, Bool, (Double, Double)))
 
-	onButtonPress canvas $ \e -> do
-		tab <- getTab
-		case tab of 
-		  IFSTab -> when (eventButton e == LeftButton) $ do
+	on canvas buttonPressEvent $ do
+		tab <- liftIO $ getTab
+                b <- eventButton
+                (x,y) <- eventCoordinates
+		liftIO $ case tab of
+		  IFSTab -> when (b == LeftButton) $ do
 			-- find a approximately selected point 
 			(w',h') <- widgetGetSize canvas
 			ifs <- readIORef ifsRef
-			let p = (eventX e/realToFrac w', eventY e/realToFrac h')
+                        let p = (x/realToFrac w', y/realToFrac h')
 			    checkMatrix i = checkBasePoint i : checkArrowPoint i : []
 		    	    checkBasePoint = checkPoint basePoint True
 		    	    checkArrowPoint = checkPoint arrowTip False
@@ -215,12 +215,12 @@ mouseHandler xml getTab ifsRef callback = do
 			writeIORef dragRef $
 				selectPoint $ concatMap checkMatrix [0..length ifs-1]
 		
-		  CodingTab -> when (eventButton e == LeftButton) $ do
+		  CodingTab -> when (b == LeftButton) $ do
 			(w',h') <- widgetGetSize canvas
 			ifs <- readIORef ifsRef
 			spinCodeLen <- builderGetObject xml castToSpinButton "spinCodeLen"
 			codeLenght <- round `fmap` get spinCodeLen spinButtonValue
-			let p = (eventX e/realToFrac w', eventY e/realToFrac h')
+                        let p = (x/realToFrac w', y/realToFrac h')
 			    code = ifsCode codeLenght ifs p
 			    text = maybe "Nicht in der Menge" (concatMap show) code
 			label <- builderGetObject xml castToLabel "labelCoding"
@@ -230,47 +230,49 @@ mouseHandler xml getTab ifsRef callback = do
 
 		return True
 
-	onButtonRelease canvas $ \e -> writeIORef dragRef Nothing >> return True
+	on canvas buttonReleaseEvent $ liftIO $ writeIORef dragRef Nothing >> return True
 
-	onMotionNotify canvas False $ \e -> do
-		dragging <- readIORef dragRef
-		(w',h') <- widgetGetSize canvas
-		let (x,y) = (eventX e/realToFrac w', eventY e/realToFrac h')
-		case dragging of
-		  Just (i,True, dp) -> do
-		  	-- moving the base point
-			ifs <- readIORef ifsRef
-			let (before,m:after) = splitAt i ifs
-			    (bx,by) = transformPoint m basePoint
-			    (nx,ny) = addDelta (x,y) dp
-			    newM = CM.translate (nx-bx) (ny-by) m
-			    newifs = before ++ newM : after
-		        writeIORef ifsRef newifs
-			comboBox <- builderGetObject xml castToComboBox "comboIFS"
-			comboBoxSetActive comboBox 0
-			callback
-		  Just (i,False, dp) -> do
-		  	-- moving the arrow tip
-			ifs <- readIORef ifsRef
-			let (before,m:after) = splitAt i ifs
-			    (bx,by) = transformPoint m basePoint
-			    (nx,ny) = addDelta (x,y) dp
-			    newScale = min (max (2*(dist (nx,ny) (bx,by))) eps) 1
-			    newRot = atan2 (ny-by) (nx-bx) + pi/2
-			    newM = CM.translate (bx-1/2) (by-1/2) . scaleMiddle newScale .
-			    		rotateMiddle newRot $ CM.identity
-			    newifs = before ++ newM : after
-		        writeIORef ifsRef newifs
-			comboBox <- builderGetObject xml castToComboBox "comboIFS"
-			comboBoxSetActive comboBox 0
-			callback
-		  Nothing -> return ()
-		return True
+	on canvas motionNotifyEvent $ do
+                (ex, ey) <- eventCoordinates
+                liftIO $ do
+                    dragging <- readIORef dragRef
+                    (w',h') <- widgetGetSize canvas
+                    let (x,y) = (ex/realToFrac w', ey/realToFrac h')
+                    case dragging of
+                      Just (i,True, dp) -> do
+                            -- moving the base point
+                            ifs <- readIORef ifsRef
+                            let (before,m:after) = splitAt i ifs
+                                (bx,by) = transformPoint m basePoint
+                                (nx,ny) = addDelta (x,y) dp
+                                newM = CM.translate (nx-bx) (ny-by) m
+                                newifs = before ++ newM : after
+                            writeIORef ifsRef newifs
+                            comboBox <- builderGetObject xml castToComboBox "comboIFS"
+                            comboBoxSetActive comboBox 0
+                            callback
+                      Just (i,False, dp) -> do
+                            -- moving the arrow tip
+                            ifs <- readIORef ifsRef
+                            let (before,m:after) = splitAt i ifs
+                                (bx,by) = transformPoint m basePoint
+                                (nx,ny) = addDelta (x,y) dp
+                                newScale = min (max (2*(dist (nx,ny) (bx,by))) eps) 1
+                                newRot = atan2 (ny-by) (nx-bx) + pi/2
+                                newM = CM.translate (bx-1/2) (by-1/2) . scaleMiddle newScale .
+                                            rotateMiddle newRot $ CM.identity
+                                newifs = before ++ newM : after
+                            writeIORef ifsRef newifs
+                            comboBox <- builderGetObject xml castToComboBox "comboIFS"
+                            comboBoxSetActive comboBox 0
+                            callback
+                      Nothing -> return ()
+                    return True
 
   where eps = 1/10
 	basePoint = (1/2, 1/2)
 	arrowTip  = (1/2, 0)
-        dist (x,y) (x',y') = sqrt ((x-x')^2 + (y-y')^2)
+        dist (x,y) (x',y') = sqrt ((x-x')**2 + (y-y')**2)
         delta (x,y) (x',y') = (x'-x, y'-y)
         addDelta (x,y) (dx,dy) = (x + dx, y + dy)
 	selectPoint pts = let (d, c) = minimumBy fst pts
@@ -281,7 +283,7 @@ mouseHandler xml getTab ifsRef callback = do
 	
 handleCodeButton xml handler = do
 	button <- builderGetObject xml castToButton "buttonCopyCode"
-	onClicked button $ do
+	on button buttonActivated $ liftIO $ do
 		label <- builderGetObject xml castToLabel "labelCoding"
 		labelText <- get label labelLabel
 		let codeText = drop (length "Kodierung: ") labelText
@@ -379,14 +381,19 @@ onRendererChange xml getRend realHandler = do
 			realHandler
 
 	forM ["radioSet", "radioCairo", "radioChaos", "toggleCylinderTrace",
-	      "toggleShowLines", "toggleShowFraktal"] $ \w -> 
-		builderGetObject xml castToToggleButton w >>= flip onToggled handler
-	forM ["spinCairoDepth", "spinSetDepth", "spinChaosPoints"] $ \w ->
-		builderGetObject xml castToSpinButton w >>= flip onValueSpinned handler
-	forM ["entryCylinder"] $ \w ->
-		builderGetObject xml castToEntry w >>= flip onEditableChanged handler
-	builderGetObject xml castToNotebook "notebook" >>= flip afterSwitchPage (const handler)
-	builderGetObject xml castToComboBox "comboBaseSet" >>= flip onChanged handler
+	      "toggleShowLines", "toggleShowFraktal"] $ \wn -> do
+                w <- builderGetObject xml castToToggleButton wn
+                on w toggled handler
+	forM ["spinCairoDepth", "spinSetDepth", "spinChaosPoints"] $ \wn -> do
+		w <- builderGetObject xml castToSpinButton wn
+                onValueSpinned w handler
+	forM ["entryCylinder"] $ \wn -> do
+		w <- builderGetObject xml castToEntry wn
+                on w editableChanged handler
+	w <- builderGetObject xml castToNotebook "notebook"
+        after w switchPage  (const handler)
+	w <- builderGetObject xml castToComboBox "comboBaseSet"
+        on w changed handler
 
 ifsLabel xml ifs = do
 	label <- builderGetObject xml castToLabel "labelIFS"
@@ -407,7 +414,7 @@ ifsLabel xml ifs = do
 onIFSChange xml ifsRef realHandler = do
 	comboBox <- builderGetObject xml castToComboBox "comboIFS"
 	comboBoxSetModelText comboBox
-	mapM_ (comboBoxAppendText comboBox . T.pack . fst) knownIFS
+	mapM_ (comboBoxAppendText comboBox . T.pack) $ "(custom IFS)" : map fst knownIFS
 
 	spinNum <- builderGetObject xml castToSpinButton "spinNumPhi"
 
@@ -415,13 +422,12 @@ onIFSChange xml ifsRef realHandler = do
 		curifs <- readIORef ifsRef
 		textMB <- fmap T.unpack <$> comboBoxGetActiveText comboBox
 		doMB textMB $ \text -> do
-			doMB (lookup text knownIFS) $ \ifs -> do
-				when (curifs /= ifs) $ do 
-					writeIORef ifsRef ifs
-					set spinNum [spinButtonValue := fromIntegral (length ifs)]
-					realHandler
-	onChanged comboBox handler
-	
+                    doMB (lookup text knownIFS) $ \ifs -> do
+                        writeIORef ifsRef ifs
+                        set spinNum [spinButtonValue := fromIntegral (length ifs)]
+                        realHandler
+	on comboBox changed handler
+
 	afterValueSpinned spinNum $ do
 		curifs <- readIORef ifsRef
 		n <- round `fmap` get spinNum spinButtonValue
@@ -448,7 +454,7 @@ handleFileButtons xml ifsRef handler = do
 	fileFilterSetName filter "Faktal-Dateien"
 	fileFilterAddPattern filter "*.frak"
 
-	onClicked saveButton $ do
+	on saveButton buttonActivated $ do
 		dialog <- fileChooserDialogNew
               			(Just $ "Fraktal speichern")
               			(Just window)
@@ -459,9 +465,9 @@ handleFileButtons xml ifsRef handler = do
 		fileChooserAddFilter dialog filter
 		widgetShow dialog
 		response <- dialogRun dialog
-		case response of 
+		case response of
 		  ResponseAccept -> do  fileNameMB <- fileChooserGetFilename dialog
-		  			doMB fileNameMB $ \fileName -> do 
+					doMB fileNameMB $ \fileName -> do
 						let fileName' =
 							if ".frak" `isSuffixOf` fileName
 							then fileName
@@ -471,7 +477,7 @@ handleFileButtons xml ifsRef handler = do
 		  _ -> return ()
 		widgetDestroy dialog
 
-	onClicked openButton $ do
+	on openButton buttonActivated $ do
 		dialog <- fileChooserDialogNew
               			(Just $ "Fraktal öffnen")
               			(Just window)
@@ -510,24 +516,22 @@ main = do
 
 	let restartIFSDrawing = ifsUpdated xml ifsRef >> restartDrawing
 
-	onKeyPress window $
-		\e -> case eventKeyChar e of
-		      Just 'q' -> widgetDestroy window >> return True
-		      -- broken with xmonad
-		      Just 'f' -> windowFullscreen window >> return True
-		      _        -> return False
-	onDestroy window mainQuit
+	on window keyPressEvent $ do
+            val <- eventKeyName
+            liftIO $ case () of
+                () | val == T.pack "q" -> widgetDestroy window >> return True
+                   | val == T.pack "f" -> windowFullscreen window >> return True
+                   | otherwise         -> return False
+	on window objectDestroy mainQuit
         quitButton <- builderGetObject xml castToButton "buttonquit"
-	quitButton `onClicked` widgetDestroy window
+	on quitButton buttonActivated $ liftIO $ widgetDestroy window
 
 	handleCodeButton xml restartDrawing
 
 	handleFileButtons xml ifsRef restartIFSDrawing
 
 	onRendererChange xml getRend restartDrawing
-	onExpose canvas $ const $ do
-		restartDrawing
-		return True
+	on canvas draw $ liftIO restartDrawing
 	onIFSChange xml ifsRef restartIFSDrawing
 
 	mouseHandler xml (getActiveTab xml) ifsRef $ do
@@ -539,3 +543,8 @@ main = do
 	widgetShowAll window
 	mainGUI
 
+
+widgetGetSize widget = do
+    w <- widgetGetAllocatedWidth widget
+    h <- widgetGetAllocatedHeight widget
+    return (w,h)
